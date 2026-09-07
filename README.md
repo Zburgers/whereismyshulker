@@ -1,6 +1,6 @@
 # Where Is My Shulker
 
-This mod keeps track of every shulker box you place or break in a world so you never again have to wander around your world searching desparately for your valuables.
+This client-side Fabric mod tracks shulker boxes you place or break in a world so you never again have to wander around your world searching desparately for your valuables.
 
 It adds a simple command to interact with the tracked data.
 
@@ -36,7 +36,7 @@ The output is paginated, if necessary.
 
 ### `/shulker clear`
 
-Clears all unnamed and undyed shulker boxes from the list.
+Clears all undyed shulker boxes from the list.
 
 ### `/shulker clearall`
 
@@ -50,9 +50,17 @@ All data is saved as a CSV file. For *Singleplayer* worlds the path is `<world f
 
 On *Multiplayer* servers shulker boxes are stored in `.minecraft/.whereismyshulker/<serverip>_<port>/shulker_boxes.csv`
 
+## 🧩 Compatibility
+
+* Minecraft 26.2
+* Fabric Loader 0.19.5 or newer
+* Fabric API 0.160.0+26.2
+* Java 25 for development and runtime
+* Client-side only; multiplayer servers do not need this mod installed
+
 ---
 
 ## 🧱 Notes
 
-* Only shulkers broken by the player get removed. Explosions or piston movement isn't tracked.
+* Only shulkers observed through this client's placement and player-break workflow are tracked. Explosions, piston movement, other-player actions, commands, and arbitrary server changes aren't tracked.
 * I've searched extensively for an existing solution to this issue but without any success. I did find 9 year old reddit posts asking the same question, but since this appears to be an unsolved problem I wanted to take it into my own hands, since I regularly struggle with lost shulker boxes. 
