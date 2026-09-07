@@ -1,6 +1,6 @@
 package org.mcsebi.whereismyshulker.client;
 
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.core.BlockPos;
 
 public class ShulkerBoxData {
     private final BlockPos position;
@@ -14,7 +14,7 @@ public class ShulkerBoxData {
         this.dimension = dimension;
         this.color = color;
         this.timestamp = timestamp;
-        this.customName = customName;
+        this.customName = customName == null ? "" : customName;
     }
 
     public BlockPos getPosition() {
@@ -49,7 +49,7 @@ public class ShulkerBoxData {
 
     // Parse from CSV format
     public static ShulkerBoxData fromCsv(String csvLine) {
-        String[] parts = csvLine.split(",");
+        String[] parts = csvLine.split(",", 7);
         if (parts.length != 7 && parts.length != 6) {
             return null;
         }

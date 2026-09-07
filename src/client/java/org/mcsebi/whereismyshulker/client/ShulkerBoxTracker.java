@@ -1,14 +1,15 @@
 package org.mcsebi.whereismyshulker.client;
 
-import net.minecraft.block.Block;
-import net.minecraft.block.ShulkerBoxBlock;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientPlayNetworkHandler;
-import net.minecraft.client.world.ClientWorld;
-import net.minecraft.item.ItemStack;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.World;
-import net.minecraft.util.WorldSavePath;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.multiplayer.ServerData;
+import net.minecraft.client.server.IntegratedServer;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.item.DyeColor;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.ShulkerBoxBlock;
+import net.minecraft.world.level.storage.LevelResource;
 
 import java.io.*;
 import java.nio.file.Files;
@@ -34,8 +35,8 @@ public class ShulkerBoxTracker {
     }
 
     public void onWorldLoad() {
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client.world == null) {
+        Minecraft client = Minecraft.getInstance();
+        if (client.level == null) {
             return;
         }
 
@@ -54,10 +55,9 @@ public class ShulkerBoxTracker {
      * @param client Minecraft client instance
      * @return Path to the CSV file
      */
-    private Path getCsvPath(MinecraftClient client) {
-        ClientPlayNetworkHandler networkHandler = client.getNetworkHandler();
-        String serverAddress = client.getCurrentServerEntry() != null ?
-                client.getCurrentServerEntry().address : "unknown";
+    private Path getCsvPath(Minecraft client) {
+        ServerData serverData = client.getCurrentServer();
+        String serverAddress = serverData != null ? serverData.ip : "unknown";
 
         if (!serverAddress.equals("unknown")) {
             // Multiplayer - store in .minecraft/.whereismyshulker/ip_port/
@@ -65,7 +65,7 @@ public class ShulkerBoxTracker {
             // Replace colons and other invalid characters
             serverAddress = serverAddress.replace(":", "_").replaceAll("[^a-zA-Z0-9._-]", "_");
 
-            Path minecraftDir = client.runDirectory.toPath();
+            Path minecraftDir = client.gameDirectory.toPath();
             Path whereismyshulkerDir = minecraftDir.resolve(".whereismyshulker").resolve(serverAddress);
 
             try {
@@ -77,12 +77,13 @@ public class ShulkerBoxTracker {
             return whereismyshulkerDir.resolve("shulker_boxes.csv");
         } else {
             // Singleplayer - store in world/data/
-            ClientWorld world = client.world;
+            ClientLevel world = client.level;
             if (world != null) {
                 // Get the save directory for this world
-                Path worldDir = client.runDirectory.toPath().resolve("saves");
-                if (client.getServer() != null && client.getServer().getSavePath(WorldSavePath.ROOT) != null) {
-                    worldDir = client.getServer().getSavePath(WorldSavePath.ROOT);
+                Path worldDir = client.gameDirectory.toPath().resolve("saves");
+                IntegratedServer server = client.getSingleplayerServer();
+                if (server != null && server.getWorldPath(LevelResource.ROOT) != null) {
+                    worldDir = server.getWorldPath(LevelResource.ROOT);
                 }
 
                 Path dataDir = worldDir.resolve("data");
@@ -97,7 +98,7 @@ public class ShulkerBoxTracker {
         }
 
         // Fallback to .minecraft/.whereismyshulker/default/
-        Path minecraftDir = client.runDirectory.toPath();
+        Path minecraftDir = client.gameDirectory.toPath();
         Path whereismyshulkerDir = minecraftDir.resolve(".whereismyshulker").resolve("default");
         try {
             Files.createDirectories(whereismyshulkerDir);
@@ -172,7 +173,7 @@ public class ShulkerBoxTracker {
      * @param world The world where the block was placed
      * @param customName Custom name of the shulker box, if any
      */
-    public void onShulkerBoxPlaced(BlockPos pos, Block block, World world, String customName) {
+    public void onShulkerBoxPlaced(BlockPos pos, Block block, Level world, String customName) {
         if (!(block instanceof ShulkerBoxBlock)) {
             return;
         }
@@ -181,7 +182,7 @@ public class ShulkerBoxTracker {
         String color = getShulkerBoxColor(block);
 
         // Get dimension name
-        String dimension = world.getRegistryKey().getValue().toString();
+        String dimension = dimensionId(world);
 
         // Add to list
         ShulkerBoxData data = new ShulkerBoxData(pos, dimension, color, System.currentTimeMillis(), customName);
@@ -191,9 +192,9 @@ public class ShulkerBoxTracker {
         saveToCsv();
     }
 
-    public void onShulkerBoxBroken(BlockPos pos) {
-        // Remove any shulker box at this position
-        shulkerBoxes.removeIf(data -> data.getPosition().equals(pos));
+    public void onShulkerBoxBroken(BlockPos pos, Level world) {
+        String dimension = dimensionId(world);
+        shulkerBoxes.removeIf(data -> data.getPosition().equals(pos) && data.getDimension().equals(dimension));
 
         // Save to CSV
         saveToCsv();
@@ -206,22 +207,8 @@ public class ShulkerBoxTracker {
      * @return Color name as a string
      */
     private String getShulkerBoxColor(Block block) {
-        String blockName = block.getTranslationKey();
-        // Extract color from translation key like "block.minecraft.red_shulker_box"
-        if (blockName.contains("shulker_box")) {
-            String[] parts = blockName.split("\\.");
-            if (parts.length > 0) {
-                String lastPart = parts[parts.length - 1];
-                if (lastPart.equals("shulker_box")) {
-                    return ""; // undyed shulker box
-                } else {
-                    // Remove "_shulker_box" and capitalize
-                    String colorPart = lastPart.replace("_shulker_box", "");
-                    return capitalize(colorPart.replace("_", " "));
-                }
-            }
-        }
-        return "Unknown";
+        DyeColor color = ((ShulkerBoxBlock) block).getColor();
+        return color == null ? "" : capitalize(color.getSerializedName().replace('_', ' '));
     }
 
     /**
@@ -246,6 +233,10 @@ public class ShulkerBoxTracker {
             }
         }
         return result.toString().trim();
+    }
+
+    static String dimensionId(Level level) {
+        return level.dimension().identifier().toString();
     }
 
     public List<ShulkerBoxData> getShulkerBoxes() {
