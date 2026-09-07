@@ -1,301 +1,113 @@
 package org.mcsebi.whereismyshulker.client;
 
 import com.mojang.brigadier.arguments.IntegerArgumentType;
-import com.mojang.brigadier.arguments.StringArgumentType;
 import net.fabricmc.api.ClientModInitializer;
-import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
+import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
-import net.minecraft.text.ClickEvent;
-import net.minecraft.text.HoverEvent;
-import net.minecraft.text.MutableText;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.World;
-import net.minecraft.world.dimension.DimensionType;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
+import net.fabricmc.fabric.api.event.client.player.ClientPlayerBlockBreakEvents;
+import net.minecraft.ChatFormatting;
+import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.ClickEvent;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.HoverEvent;
+import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.world.level.block.ShulkerBoxBlock;
 
 import java.util.List;
 
 public class WhereismyshulkerClient implements ClientModInitializer {
-
-    private static final int ITEMS_PER_PAGE = 8; // maybe a maximum of 9 with nav would be possible on one screen, but 8 can be calculated more easily
+    private static final int ITEMS_PER_PAGE = 8;
 
     @Override
     public void onInitializeClient() {
-        // Initialize tracker when world loads
-        ClientLifecycleEvents.CLIENT_STARTED.register(client -> {
-            // Register for world load/unload events
+        ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> ShulkerBoxTracker.getInstance().onWorldLoad());
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> ShulkerBoxTracker.getInstance().onWorldUnload());
+        ClientPlayerBlockBreakEvents.AFTER.register((level, player, pos, state) -> {
+            if (state.getBlock() instanceof ShulkerBoxBlock) ShulkerBoxTracker.getInstance().onShulkerBoxBroken(pos, level);
         });
-
-        // Register world join event
-        ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
-            ShulkerBoxTracker.getInstance().onWorldLoad();
-        });
-
-        // Register world leave event
-        ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
-            ShulkerBoxTracker.getInstance().onWorldUnload();
-        });
-
-        // Register the /shulker command with pagination
-        ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
-            dispatcher.register(ClientCommandManager.literal("shulker")
-                .executes(context -> {
-                    // Show page 1 by default
-                    return showShulkerList(context.getSource(), "1");
-                })
-                .then(ClientCommandManager.argument("page", StringArgumentType.string())
-                    .executes(context -> {
-                        String arg = StringArgumentType.getString(context, "page");
-                        return showShulkerList(context.getSource(), arg);
-                    })
-                )
-            )
-        );
+        ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> dispatcher.register(
+                ClientCommands.literal("shulker")
+                        .executes(context -> showShulkerList(context.getSource(), 1))
+                        .then(ClientCommands.argument("page", IntegerArgumentType.integer(1))
+                                .executes(context -> showShulkerList(context.getSource(), IntegerArgumentType.getInteger(context, "page"))))
+                        .then(ClientCommands.literal("clear").requires(FabricClientCommandSource::attended).executes(context -> {
+                            ShulkerBoxTracker.getInstance().resetShulkerBoxes(false);
+                            context.getSource().sendFeedback(Component.literal("Default shulker boxes have been reset.").withStyle(ChatFormatting.GREEN));
+                            return 1;
+                        }))
+                        .then(ClientCommands.literal("clearall").requires(FabricClientCommandSource::attended).executes(context -> {
+                            ShulkerBoxTracker.getInstance().resetShulkerBoxes(true);
+                            context.getSource().sendFeedback(Component.literal("All shulker boxes have been reset.").withStyle(ChatFormatting.GREEN));
+                            return 1;
+                        }))));
     }
 
-    /**
-     * Display the shulker box list for the given page.
-     *
-     * @param source Command sender source
-     * @param arg Command argument as string
-     * @return Command result status
-     */
-    private int showShulkerList(FabricClientCommandSource source, String arg) {
+    private int showShulkerList(FabricClientCommandSource source, int page) {
         ShulkerBoxTracker tracker = ShulkerBoxTracker.getInstance();
-        List<ShulkerBoxData> shulkerBoxes = tracker.getShulkerBoxes();
-
-        if (shulkerBoxes.isEmpty()) {
-            source.sendFeedback(Text.literal("No shulker boxes tracked yet!").formatted(Formatting.YELLOW));
+        List<ShulkerBoxData> boxes = tracker.getShulkerBoxes();
+        if (boxes.isEmpty()) {
+            source.sendFeedback(Component.literal("No shulker boxes tracked yet!").withStyle(ChatFormatting.YELLOW));
             return 1;
         }
-
-        // Check if arg is the parge or a reset command
-        int page;
-        try {
-            page = Integer.parseInt(arg);
-        } catch (NumberFormatException e) {
-            if(arg.toLowerCase().startsWith("reset") || arg.toLowerCase().startsWith("prune") || arg.toLowerCase().startsWith("clear")) {
-                if(arg.toLowerCase().endsWith("all")) {
-                    tracker.resetShulkerBoxes(true);
-                    source.sendFeedback(Text.literal("All shulker boxes have been reset.").formatted(Formatting.GREEN));
-                } else {
-                    tracker.resetShulkerBoxes(false);
-                    source.sendFeedback(Text.literal("Default shulker boxes have been reset.").formatted(Formatting.GREEN));
-                }
-                return 1;
-            }
-            source.sendError(Text.literal("Invalid page number! Please enter a valid integer or type 'reset' to reset your shulker history."));
+        int totalPages = (boxes.size() + ITEMS_PER_PAGE - 1) / ITEMS_PER_PAGE;
+        if (page > totalPages) {
+            source.sendError(Component.literal(totalPages == 1 ? "Invalid page number! There is only one page." : "Invalid page number! Valid pages: 1-" + totalPages));
             return 0;
         }
-
-        int totalPages = (int) Math.ceil((double) shulkerBoxes.size() / ITEMS_PER_PAGE);
-
-        if (page < 1 || page > totalPages) {
-            if(totalPages == 1) {
-                source.sendError(Text.literal("Invalid page number! There is only one page."));
+        int start = (page - 1) * ITEMS_PER_PAGE, end = Math.min(start + ITEMS_PER_PAGE, boxes.size());
+        source.sendFeedback(Component.literal("=== Shulker Box Tracker ===").withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD));
+        source.sendFeedback(Component.literal("Page " + page + " of " + totalPages + " (" + boxes.size() + " total)").withStyle(ChatFormatting.GRAY));
+        BlockPos playerPos = source.getPlayer().blockPosition();
+        String playerDim = ShulkerBoxTracker.dimensionId(source.getLevel());
+        for (int i = start; i < end; i++) {
+            ShulkerBoxData data = boxes.get(i);
+            String name = (data.hasCustomName() ? data.getCustomName() : data.getColor() + " Shulker Box").trim();
+            MutableComponent dimension = Component.empty(), distance = Component.empty().withStyle(ChatFormatting.DARK_GRAY);
+            if (data.getDimension().equals(playerDim)) {
+                int vertical = Math.abs(playerPos.getY() - data.getPosition().getY());
+                String marker = data.getPosition().getY() < playerPos.getY() ? "v" : "^";
+                distance = Component.literal(String.format(" [%d %s, %d %s]", (int) getHorizontalDistance(playerPos, data.getPosition()), getDirection(playerPos, data.getPosition()), vertical, marker)).withStyle(ChatFormatting.DARK_GRAY);
             } else {
-                source.sendError(Text.literal("Invalid page number! Valid pages: 1-" + totalPages));
+                dimension = Component.literal("(").withStyle(ChatFormatting.GRAY).append(Component.literal(formatDimension(data.getDimension())).withStyle(ChatFormatting.WHITE)).append(Component.literal(")").withStyle(ChatFormatting.GRAY));
             }
-            return 0;
-        }
-
-        int startIndex = (page - 1) * ITEMS_PER_PAGE;
-        int endIndex = Math.min(startIndex + ITEMS_PER_PAGE, shulkerBoxes.size());
-
-        // Header
-        source.sendFeedback(Text.literal("=== Shulker Box Tracker ===").formatted(Formatting.GOLD, Formatting.BOLD));
-        source.sendFeedback(Text.literal("Page " + page + " of " + totalPages + " (" + shulkerBoxes.size() + " total)")
-                .formatted(Formatting.GRAY));
-
-        BlockPos playerPos = source.getPlayer().getBlockPos();
-        String playerDim = source.getWorld().getRegistryKey().getValue().toString(); // returns e.g. minecraft:overworld
-
-        // List shulker boxes for this page
-        for (int i = startIndex; i < endIndex; i++) {
-            ShulkerBoxData data = shulkerBoxes.get(i);
-            int boxNumber = i + 1;
-
-            String shulkerName = data.getColor() + " Shulker Box";
-            if(data.hasCustomName()) {
-                shulkerName = data.getCustomName();
-            }
-            shulkerName = shulkerName.trim();
-
-            // generate info about dimension, distance and direction
-            Text dimensionInfo;
-            Text distanceInfo;
-            if(data.getDimension().equals(playerDim)) {
-                // same dimension - show distance and direction
-                dimensionInfo = Text.literal("");
-
-                double horizontalDistance = getHorizontalDistance(playerPos, data.getPosition());
-                String direction = getDirection(playerPos, data.getPosition());
-                int verticalDistance = Math.abs(playerPos.getY() - data.getPosition().getY());
-                String belowOrAbove = data.getPosition().getY() < playerPos.getY() ? "v" : "^";
-
-                distanceInfo = Text.literal(String.format(" [%d %s, %d %s]", (int)horizontalDistance, direction, verticalDistance, belowOrAbove))
-                        .formatted(Formatting.DARK_GRAY);
-
-            } else {
-                // different dimension - show dimension only
-                dimensionInfo = Text.literal("(").formatted(Formatting.GRAY)
-                        .append(Text.literal(formatDimension(data.getDimension()).formatted(Formatting.WHITE))
-                                .append(Text.literal(")").formatted(Formatting.GRAY)));
-
-                distanceInfo = Text.literal("").formatted(Formatting.DARK_GRAY);
-            }
-
-            MutableText message = Text.literal(boxNumber + ". ").formatted(Formatting.WHITE)
-                    .append(Text.literal(shulkerName).formatted(getColorFormatting(data.getColor())))
-                    .append(Text.literal(" (").formatted(Formatting.GRAY))
-                    .append(createClickableCoords(data))
-                    .append(Text.literal(") ").formatted(Formatting.GRAY))
-                    .append(dimensionInfo)
-                    .append(distanceInfo);
-
-
+            MutableComponent message = Component.literal((i + 1) + ". ").withStyle(ChatFormatting.WHITE)
+                    .append(Component.literal(name).withStyle(getColorFormatting(data.getColor())))
+                    .append(Component.literal(" (").withStyle(ChatFormatting.GRAY)).append(createClickableCoords(data))
+                    .append(Component.literal(") ").withStyle(ChatFormatting.GRAY)).append(dimension).append(distance);
             source.sendFeedback(message);
         }
-
-        // Footer with navigation (if necessary)
-        MutableText navigation = Text.literal("");
-        boolean hasNav = false;
-
-        if (page > 1) {
-            int prev = page - 1;
-            navigation.append(Text.literal("[← Prev]")
-                    .formatted(Formatting.YELLOW)
-                    .styled(style -> style
-                            .withClickEvent(new ClickEvent.RunCommand("/shulker " + prev))
-                            .withHoverEvent(new HoverEvent.ShowText(Text.literal("Go to page " + prev)))
-                    ));
-            navigation.append(Text.literal(" "));
-            hasNav = true;
-        }
-
-        if (page < totalPages) {
-            int next = page + 1;
-            navigation.append(Text.literal("[Next →]")
-                    .formatted(Formatting.YELLOW)
-                    .styled(style -> style
-                            .withClickEvent(new ClickEvent.RunCommand("/shulker " + next))
-                            .withHoverEvent(new HoverEvent.ShowText(Text.literal("Go to page " + next)))
-                    ));
-            hasNav = true;
-        }
-
-        if (hasNav) {
-            source.sendFeedback(Text.literal("")); // Empty line before navigation
-            source.sendFeedback(navigation);
-        }
-
+        MutableComponent navigation = Component.empty();
+        if (page > 1) navigation.append(nav("[← Prev]", page - 1)).append(" ");
+        if (page < totalPages) navigation.append(nav("[Next →]", page + 1));
+        if (!navigation.getString().isEmpty()) { source.sendFeedback(Component.empty()); source.sendFeedback(navigation); }
         return 1;
     }
 
-    /**
-     * Create clickable coordinates text component.
-     *
-     * @param data Shulker box data
-     * @return Clickable text component with coordinates
-     */
-    private MutableText createClickableCoords(ShulkerBoxData data) {
-        BlockPos pos = data.getPosition();
-
-        String coords = pos.getX() + ", " + pos.getY() + ", " + pos.getZ();
-        String cmd = "/tp @s " + pos.getX() + " " + pos.getY() + " " + pos.getZ();
-
-        return Text.literal(coords)
-                .formatted(Formatting.GREEN)
-                .styled(style -> style
-                        .withClickEvent(new ClickEvent.SuggestCommand(cmd))
-                        .withHoverEvent(new HoverEvent.ShowText(Text.literal("Click to teleport")))
-                );
+    private MutableComponent nav(String label, int page) {
+        return Component.literal(label).withStyle(style -> style.withColor(ChatFormatting.YELLOW)
+                .withClickEvent(new ClickEvent.RunCommand("/shulker " + page))
+                .withHoverEvent(new HoverEvent.ShowText(Component.literal("Go to page " + page))));
     }
 
-    /**
-     * Get the Minecraft Formatting color for the given color name.
-     *
-     * @param color Color name
-     * @return Formatting color
-     */
-    private Formatting getColorFormatting(String color) {
-        return switch (color.toLowerCase()) {
-            case "white" -> Formatting.WHITE;
-            case "orange" -> Formatting.GOLD;
-            case "magenta" -> Formatting.LIGHT_PURPLE;
-            case "light blue" -> Formatting.AQUA;
-            case "yellow" -> Formatting.YELLOW;
-            case "lime" -> Formatting.GREEN;
-            case "pink" -> Formatting.LIGHT_PURPLE;
-            case "gray" -> Formatting.DARK_GRAY;
-            case "light gray" -> Formatting.GRAY;
-            case "cyan" -> Formatting.DARK_AQUA;
-            case "purple" -> Formatting.DARK_PURPLE;
-            case "blue" -> Formatting.BLUE;
-            case "brown" -> Formatting.GOLD;
-            case "green" -> Formatting.DARK_GREEN;
-            case "red" -> Formatting.RED;
-            case "black" -> Formatting.BLACK;
-            default -> Formatting.LIGHT_PURPLE;
-        };
+    private MutableComponent createClickableCoords(ShulkerBoxData data) {
+        BlockPos p = data.getPosition();
+        return Component.literal(p.getX() + ", " + p.getY() + ", " + p.getZ()).withStyle(style -> style.withColor(ChatFormatting.GREEN)
+                .withClickEvent(new ClickEvent.SuggestCommand("/tp @s " + p.getX() + " " + p.getY() + " " + p.getZ()))
+                .withHoverEvent(new HoverEvent.ShowText(Component.literal("Click to teleport"))));
     }
 
-    /**
-     * Get cardinal direction from one position to another.
-     *
-     * @param from First position
-     * @param to Second position
-     * @return Direction as string (N, NE, E, SE, S, SW, W, NW)
-     */
+    private ChatFormatting getColorFormatting(String color) {
+        return switch (color.toLowerCase()) { case "white" -> ChatFormatting.WHITE; case "orange", "brown" -> ChatFormatting.GOLD; case "magenta", "pink" -> ChatFormatting.LIGHT_PURPLE; case "light blue" -> ChatFormatting.AQUA; case "yellow" -> ChatFormatting.YELLOW; case "lime" -> ChatFormatting.GREEN; case "gray" -> ChatFormatting.DARK_GRAY; case "light gray" -> ChatFormatting.GRAY; case "cyan" -> ChatFormatting.DARK_AQUA; case "purple" -> ChatFormatting.DARK_PURPLE; case "blue" -> ChatFormatting.BLUE; case "green" -> ChatFormatting.DARK_GREEN; case "red" -> ChatFormatting.RED; case "black" -> ChatFormatting.BLACK; default -> ChatFormatting.LIGHT_PURPLE; };
+    }
+
     private String getDirection(BlockPos from, BlockPos to) {
-        double dx = to.getX() - from.getX();
-        double dz = to.getZ() - from.getZ();
-        double angle = Math.toDegrees(Math.atan2(-dx, dz));
+        double angle = Math.toDegrees(Math.atan2(-(to.getX() - from.getX()), to.getZ() - from.getZ()));
         if (angle < 0) angle += 360;
-
-        if (angle >= 337.5 || angle < 22.5) return "S";
-        if (angle >= 22.5 && angle < 67.5) return "SW";
-        if (angle >= 67.5 && angle < 112.5) return "W";
-        if (angle >= 112.5 && angle < 157.5) return "NW";
-        if (angle >= 157.5 && angle < 202.5) return "N";
-        if (angle >= 202.5 && angle < 247.5) return "NE";
-        if (angle >= 247.5 && angle < 292.5) return "E";
-        if (angle >= 292.5 && angle < 337.5) return "SE";
-
-        return "Unknown";
+        return switch ((int) ((angle + 22.5) / 45) % 8) { case 0 -> "S"; case 1 -> "SW"; case 2 -> "W"; case 3 -> "NW"; case 4 -> "N"; case 5 -> "NE"; case 6 -> "E"; default -> "SE"; };
     }
 
-    /**
-     * Calculate horizontal distance between two BlockPos.
-     *
-     * @param from First position
-     * @param to Second position
-     * @return Horizontal distance
-     */
-    private double getHorizontalDistance(BlockPos from, BlockPos to) {
-        double dx = to.getX() - from.getX();
-        double dz = to.getZ() - from.getZ();
-        return Math.sqrt(dx * dx + dz * dz);
-    }
-
-    /**
-     * Format dimension string to a more user-friendly name.
-     *
-     * @param dimension Dimension identifier
-     * @return Formatted dimension name
-     */
-    private String formatDimension(String dimension) {
-        if (dimension.contains("overworld")) {
-            return "Overworld";
-        } else if (dimension.contains("the_nether")) {
-            return "Nether";
-        } else if (dimension.contains("the_end")) {
-            return "End";
-        }
-        return dimension;
-    }
+    private double getHorizontalDistance(BlockPos from, BlockPos to) { return Math.hypot(to.getX() - from.getX(), to.getZ() - from.getZ()); }
+    private String formatDimension(String dimension) { if (dimension.contains("overworld")) return "Overworld"; if (dimension.contains("the_nether")) return "Nether"; if (dimension.contains("the_end")) return "End"; return dimension; }
 }
