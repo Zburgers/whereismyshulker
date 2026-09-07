@@ -1,13 +1,13 @@
 package org.mcsebi.whereismyshulker.client.mixin;
 
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.ShulkerBoxBlock;
-import net.minecraft.item.BlockItem;
-import net.minecraft.item.ItemPlacementContext;
-import net.minecraft.util.ActionResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.World;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.context.BlockPlaceContext;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.ShulkerBoxBlock;
+import net.minecraft.world.level.block.state.BlockState;
 import org.mcsebi.whereismyshulker.client.ShulkerBoxTracker;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
@@ -21,11 +21,11 @@ public abstract class BlockItemMixin {
     @Unique
     private static final ThreadLocal<String> whereismyshulker$pendingCustomName = new ThreadLocal<>();
 
-    @Inject(method = "place", at = @At("HEAD"))
-    private void whereismyshulker$captureName(ItemPlacementContext context,
-                                              CallbackInfoReturnable<ActionResult> cir) {
-        World world = context.getWorld();
-        if (!world.isClient()) return;
+    @Inject(method = "place(Lnet/minecraft/world/item/context/BlockPlaceContext;)Lnet/minecraft/world/InteractionResult;", at = @At("HEAD"))
+    private void whereismyshulker$captureName(BlockPlaceContext context,
+                                              CallbackInfoReturnable<InteractionResult> cir) {
+        Level level = context.getLevel();
+        if (!level.isClientSide()) return;
 
         // We only care about shulker boxes
         BlockItem self = (BlockItem) (Object) this;
@@ -35,34 +35,35 @@ public abstract class BlockItemMixin {
         String customName = "";
 
         // Capture BEFORE decrement happens
-        if(context.getStack().getCustomName() != null) {
-            customName = context.getStack().getCustomName().getString();
+        if (context.getItemInHand().getCustomName() != null) {
+            customName = context.getItemInHand().getCustomName().getString();
         }
         whereismyshulker$pendingCustomName.set(customName);
     }
 
-    @Inject(method = "place", at = @At("RETURN"))
-    private void whereismyshulker$onPlace(ItemPlacementContext context,
-                                          CallbackInfoReturnable<ActionResult> cir) {
+    @Inject(method = "place(Lnet/minecraft/world/item/context/BlockPlaceContext;)Lnet/minecraft/world/InteractionResult;", at = @At("RETURN"))
+    private void whereismyshulker$onPlace(BlockPlaceContext context,
+                                          CallbackInfoReturnable<InteractionResult> cir) {
         try {
-            if (!cir.getReturnValue().isAccepted()) return;
+            InteractionResult result = cir.getReturnValue();
+            if (result == null || !result.consumesAction()) return;
 
-            World world = context.getWorld();
-            if (!world.isClient()) return;
+            Level level = context.getLevel();
+            if (!level.isClientSide()) return;
 
             // discard everything besides shulker boxes
             BlockItem self = (BlockItem) (Object) this;
             Block block = self.getBlock();
             if (!(block instanceof ShulkerBoxBlock)) return;
 
-            BlockPos pos = context.getBlockPos();
-            BlockState state = world.getBlockState(pos);
+            BlockPos pos = context.getClickedPos();
+            BlockState state = level.getBlockState(pos);
             if (!(state.getBlock() instanceof ShulkerBoxBlock)) return;
 
             String customName = whereismyshulker$pendingCustomName.get();
 
             ShulkerBoxTracker.getInstance()
-                    .onShulkerBoxPlaced(pos, state.getBlock(), world, customName);
+                    .onShulkerBoxPlaced(pos, state.getBlock(), level, customName);
 
         } finally {
             // Always clear to avoid leaks / wrong names on later placements
