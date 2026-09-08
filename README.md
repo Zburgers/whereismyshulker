@@ -10,7 +10,7 @@ It adds a simple command to interact with the tracked data.
 
 ## ✨ Features
 
-* Tracks all placed and broken shulker boxes
+* Tracks shulker boxes placed by this client and removed through its player-break workflow
 * Records:
     * **Location**
     * **Custom name** (if set)
