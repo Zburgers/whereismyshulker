@@ -1,7 +1,6 @@
 package org.mcsebi.whereismyshulker.client;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.core.BlockPos;
@@ -36,10 +35,6 @@ public class ShulkerBoxTracker {
 
     public void onWorldLoad() {
         Minecraft client = Minecraft.getInstance();
-        if (client.level == null) {
-            return;
-        }
-
         csvFilePath = getCsvPath(client);
         loadFromCsv();
     }
@@ -77,35 +72,32 @@ public class ShulkerBoxTracker {
             return whereismyshulkerDir.resolve("shulker_boxes.csv");
         } else {
             // Singleplayer - store in world/data/
-            ClientLevel world = client.level;
-            if (world != null) {
-                // Get the save directory for this world
-                Path worldDir = client.gameDirectory.toPath().resolve("saves");
-                IntegratedServer server = client.getSingleplayerServer();
-                if (server != null && server.getWorldPath(LevelResource.ROOT) != null) {
-                    worldDir = server.getWorldPath(LevelResource.ROOT);
-                }
-
-                Path dataDir = worldDir.resolve("data");
+            IntegratedServer server = client.getSingleplayerServer();
+            if (server == null && client.level == null) {
+                Path whereismyshulkerDir = client.gameDirectory.toPath().resolve(".whereismyshulker").resolve("default");
                 try {
-                    Files.createDirectories(dataDir);
+                    Files.createDirectories(whereismyshulkerDir);
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
-
-                return dataDir.resolve("shulker_boxes.csv");
+                return whereismyshulkerDir.resolve("shulker_boxes.csv");
             }
+
+            Path worldDir = client.gameDirectory.toPath().resolve("saves");
+            if (server != null && server.getWorldPath(LevelResource.ROOT) != null) {
+                worldDir = server.getWorldPath(LevelResource.ROOT);
+            }
+
+            Path dataDir = worldDir.resolve("data");
+            try {
+                Files.createDirectories(dataDir);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+
+            return dataDir.resolve("shulker_boxes.csv");
         }
 
-        // Fallback to .minecraft/.whereismyshulker/default/
-        Path minecraftDir = client.gameDirectory.toPath();
-        Path whereismyshulkerDir = minecraftDir.resolve(".whereismyshulker").resolve("default");
-        try {
-            Files.createDirectories(whereismyshulkerDir);
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-        return whereismyshulkerDir.resolve("shulker_boxes.csv");
     }
 
     private void loadFromCsv() {
