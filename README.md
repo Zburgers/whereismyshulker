@@ -50,6 +50,8 @@ All data is saved as a CSV file. For *Singleplayer* worlds the path is `<world f
 
 On *Multiplayer* servers shulker boxes are stored in `.minecraft/.whereismyshulker/<serverip>_<port>/shulker_boxes.csv`
 
+If no active world is available during client startup, data uses `.minecraft/.whereismyshulker/default/shulker_boxes.csv` as a safe fallback.
+
 ## 🧩 Compatibility
 
 * Minecraft 26.2
